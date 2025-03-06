@@ -816,8 +816,8 @@ def run(cfg: omegaconf.DictConfig):
     lpn = LPN(encoder=encoder, decoder=decoder)
 
     wandb.init(
-        entity="TheThinker",
-        project="ARC",
+        #entity="TheThinker_1",
+        project="ARC_1",
         settings=wandb.Settings(console="redirect"),
         config=omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
         save_code=True,
@@ -843,4 +843,5 @@ def run(cfg: omegaconf.DictConfig):
 
 
 if __name__ == "__main__":
+    wandb.login()
     run()
