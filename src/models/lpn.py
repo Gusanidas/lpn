@@ -11,12 +11,13 @@ from jax.tree_util import tree_map
 import optax
 
 from src.models.transformer import EncoderTransformer, DecoderTransformer
+from src.models.transformer2 import EncoderTransformer as EncoderTransformer2
 from src.models.utils import EncoderTransformerConfig, DecoderTransformerConfig
 from src.data_utils import make_leave_one_out
 
 
 class LPN(nn.Module):
-    encoder: EncoderTransformer
+    encoder: EncoderTransformer2
     decoder: DecoderTransformer
 
     def __call__(

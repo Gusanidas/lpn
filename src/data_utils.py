@@ -179,3 +179,40 @@ def make_leave_one_out(array: chex.Array, axis: int) -> chex.Array:
         output.append(jnp.concatenate([array_before, array_after], axis=axis))
     output = jnp.stack(output, axis=axis - 1)
     return output
+
+
+def make_all_pairs(array: jnp.ndarray, axis: int = 1) -> jnp.ndarray:
+    """
+    Enumerate all distinct pairs along `axis` in a fully vectorized manner.
+
+    Given an array of shape (*B, N, *H) along `axis` (the dimension of size N),
+    this returns a new array of shape (*B, C, 2, *H), where
+      - C = binomial_coefficient(N, 2) = N*(N-1)//2
+      - The old dimension N is replaced by two dimensions: (C, 2).
+
+    Args:
+      array: A JAX array of shape (*B, N, *H), where `axis` is the N dimension.
+      axis:  The axis along which to enumerate 2-combinations.
+
+    Returns:
+      A JAX array of shape (*B, N*(N-1)//2, 2, *H).
+    """
+    # Normalize `axis` in case it's negative
+    axis = axis % array.ndim
+    N = array.shape[axis]
+
+    # Get all (i, j) with i < j; shape of i and j will be (C,) where C = N*(N-1)//2
+    i, j = jnp.triu_indices(N, k=1)
+
+    # Gather all "first elements" of pairs along the chosen axis
+    e1 = jnp.take(array, i, axis=axis)  # shape: (*B, C, *H)
+    # Gather all "second elements" of pairs
+    e2 = jnp.take(array, j, axis=axis)  # shape: (*B, C, *H)
+
+    # Stack them to get shape (*B, C, 2, *H)
+    # We insert the new "pair" dimension (of size 2) just after the C dimension.
+    # The dimension C is at `axis`, so we use `axis + 1` for the stacking axis.
+    pairs = jnp.stack([e1, e2], axis=axis + 1)
+
+    return pairs
+
