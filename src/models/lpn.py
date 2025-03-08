@@ -918,7 +918,7 @@ if __name__ == "__main__":
         transformer_layer=TransformerLayerConfig(dropout_rate=0.05),
     )
 
-    encoder = EncoderTransformer(encoder_config)
+    encoder = EncoderTransformer2(encoder_config)
     decoder = DecoderTransformer(decoder_config)
     lpn = LPN(encoder=encoder, decoder=decoder)
 

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import jax
 from flax import linen as nn
 from src.data_utils import make_all_pairs
-
+import time
 from src.models.utils import EncoderTransformerConfig, DecoderTransformerConfig, TransformerLayer
 
 
@@ -201,10 +201,10 @@ class EncoderTransformer(nn.Module):
 if __name__ == "__main__":
     import jax
 
-    batch_size = 9
+    batch_size = 4
     mini_batch_size = 4
-    max_rows = 30
-    max_cols = 30
+    max_rows = 25
+    max_cols = 25
     vocab_size = 10
 
     # Transformer Encoder.
@@ -226,6 +226,19 @@ if __name__ == "__main__":
     apply_fn = jax.jit(encoder.apply, static_argnames="dropout_eval")
     rngs = {"dropout": jax.random.PRNGKey(0)}
     print("Input shape:", pairs.shape, grid_shapes.shape)
+
+    # Warm-up run for JIT compilation
+    _ = apply_fn(variables, pairs, grid_shapes, dropout_eval=False, rngs=rngs)
+    
+    # Timing the encoder
+    num_runs = 10
+    start_time = time.time()
+    for _ in range(num_runs):
+        latent_mu, latent_logvar = apply_fn(variables, pairs, grid_shapes, dropout_eval=False, rngs=rngs)
+    end_time = time.time()
+    avg_time = (end_time - start_time) / num_runs
+    print(f"Encoder timing: {avg_time:.4f} seconds per run (average over {num_runs} runs)")
+
     latent_mu, latent_logvar = apply_fn(variables, pairs, grid_shapes, dropout_eval=False, rngs=rngs)
     print(f"latent_mu shape = {latent_mu.shape}")
     assert latent_mu.shape == (batch_size, mini_batch_size*(mini_batch_size-1)//2, encoder_config.latent_dim)
@@ -235,3 +248,5 @@ if __name__ == "__main__":
         assert latent_logvar.shape == (batch_size, mini_batch_size*(mini_batch_size-1)//2, encoder_config.latent_dim)
     else:
         print("Output shape:", latent_mu.shape)
+
+    

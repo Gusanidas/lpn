@@ -24,6 +24,7 @@ from src.models.lpn import LPN
 from src.models.utils import DecoderTransformerConfig, EncoderTransformerConfig
 from src.evaluator import Evaluator
 from src.models.transformer import EncoderTransformer, DecoderTransformer
+from src.models.transformer2 import EncoderTransformer as EncoderTransformer2
 from src.visualization import (
     visualize_dataset_generation,
     visualize_heatmap,
@@ -808,10 +809,10 @@ def run(cfg: omegaconf.DictConfig):
     logging.info("All devices available: {}".format(jax.devices()))
 
     if cfg.training.get("mixed_precision", False):
-        encoder = EncoderTransformer(instantiate_config_for_mpt(cfg.encoder_transformer))
+        encoder = EncoderTransformer2(instantiate_config_for_mpt(cfg.encoder_transformer))
         decoder = DecoderTransformer(instantiate_config_for_mpt(cfg.decoder_transformer))
     else:
-        encoder = EncoderTransformer(hydra.utils.instantiate(cfg.encoder_transformer))
+        encoder = EncoderTransformer2(hydra.utils.instantiate(cfg.encoder_transformer))
         decoder = DecoderTransformer(hydra.utils.instantiate(cfg.decoder_transformer))
     lpn = LPN(encoder=encoder, decoder=decoder)
 
