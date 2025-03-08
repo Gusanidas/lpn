@@ -38,6 +38,7 @@ class EncoderTransformer(nn.Module):
                 the (input, output) pairs.
         """
 
+        
         pairs = make_all_pairs(pairs, axis=-4)
         grid_shapes = make_all_pairs(grid_shapes, axis=-3)
         x = self.embed_grids(pairs, grid_shapes, dropout_eval)
@@ -201,7 +202,7 @@ class EncoderTransformer(nn.Module):
 if __name__ == "__main__":
     import jax
 
-    batch_size = 4
+    batch_size = 2
     mini_batch_size = 4
     max_rows = 25
     max_cols = 25

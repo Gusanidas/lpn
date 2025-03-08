@@ -545,6 +545,7 @@ if __name__ == "__main__":
     print(f"Encoder timing: {avg_time:.4f} seconds per run (average over {num_runs} runs)")
     
     latent_mu, latent_logvar = apply_fn(variables, pairs, grid_shapes, dropout_eval=False, rngs=rngs)
+    print(f"latent_mu shape = {latent_mu.shape}")
     assert latent_mu.shape == (batch_size, mini_batch_size, encoder_config.latent_dim)
     if latent_logvar is not None:
         print("Output shape (latent_mu):", latent_mu.shape)

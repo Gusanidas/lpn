@@ -13,7 +13,7 @@ import optax
 from src.models.transformer import EncoderTransformer, DecoderTransformer
 from src.models.transformer2 import EncoderTransformer as EncoderTransformer2
 from src.models.utils import EncoderTransformerConfig, DecoderTransformerConfig
-from src.data_utils import make_leave_one_out
+from src.data_utils import make_leave_one_out, filter_pairs_without_element
 
 
 class LPN(nn.Module):
@@ -60,8 +60,10 @@ class LPN(nn.Module):
             loss: loss value.
             metrics: dictionary of metrics.
         """
+        print(f"pairs shape: {pairs.shape}, grid_shapes shape: {grid_shapes.shape}")
         assert pairs.shape[-4] > 1, f"Number of pairs should be greater than 1, got {pairs.shape[-4]}."
         latents_mu, latents_logvar = self.encoder(pairs, grid_shapes, dropout_eval)
+        print(f"latents_mu shape: {latents_mu.shape}, latents_logvar shape: {latents_logvar.shape}")
 
         if latents_logvar is not None:
             key = self.make_rng("latents")
@@ -75,20 +77,24 @@ class LPN(nn.Module):
         if mode_kwargs.get("remove_encoder_latents", False):
             key = self.make_rng("latents_init")
             latents = jax.random.normal(key, latents.shape)
-        leave_one_out_latents = make_leave_one_out(latents, axis=-2)  # (*B, N, N-1, H)
+        print(f"latents shape: {latents.shape}")
+        original_leave_one_out_latents = make_leave_one_out(latents, axis=-2)
+        leave_one_out_latents = filter_pairs_without_element(latents, axis=-2)
         if mode == "mean":
+            print("MEAN")
             # Compute the context vector by taking the mean of all but one latents.
             context = leave_one_out_latents.mean(axis=-2)  # (*B, N, H)
             # Compute the loss for each pair using the mean of all but one latents. Shape (*B, N).
             loss, metrics = self._loss_from_pair_and_context(context, pairs, grid_shapes, dropout_eval)
         elif mode == "all":
+            print("ALL")
             # Compute the loss for each pair using all but one latents. Shape (*B, N, N-1).
             loss, metrics = jax.vmap(
                 self._loss_from_pair_and_context, in_axes=(-2, None, None, None), out_axes=-1
             )(leave_one_out_latents, pairs, grid_shapes, dropout_eval)
             # For logging purposes
             context = latents
-            distance_context_latents = norm(latents[..., None, :] - leave_one_out_latents, axis=-1)
+            distance_context_latents = norm(latents[..., None, :] - original_leave_one_out_latents, axis=-1)
         elif mode == "random_search":
             for arg in ["num_samples", "scale"]:
                 assert arg in mode_kwargs, f"'{arg}' argument required for 'random_search' training mode."
@@ -120,22 +126,25 @@ class LPN(nn.Module):
             loss, metrics = self._loss_from_pair_and_context(context, pairs, grid_shapes, dropout_eval)
         else:
             raise ValueError(f"Unsupported mode: {mode}")
+        print(f"context shape: {context.shape}")
         leave_one_out_contexts = make_leave_one_out(context, axis=-2)
+        print(f"leave_one_out_contexts shape: {leave_one_out_contexts.shape}")
         cosine_between_contexts = jnp.einsum("...h,...nh->...n", context, leave_one_out_contexts) / (
             norm(context, axis=-1)[..., None] * norm(leave_one_out_contexts, axis=-1) + 1e-5
         )
-        cosine_between_latents = jnp.einsum("...h,...nh->...n", latents, leave_one_out_latents) / (
-            norm(latents, axis=-1)[..., None] * norm(leave_one_out_latents, axis=-1) + 1e-5
+
+        cosine_between_latents = jnp.einsum("...h,...nh->...n", latents, original_leave_one_out_latents) / (
+            norm(latents, axis=-1)[..., None] * norm(original_leave_one_out_latents, axis=-1) + 1e-5
         )
         if mode != "all":
-            distance_context_latents = norm(context - latents, axis=-1)
+            distance_context_latents = norm(leave_one_out_contexts - leave_one_out_latents, axis=-1)
         metrics.update(
             latents_norm=norm(latents, axis=-1),
             context_norm=norm(context, axis=-1),
             distance_context_latents=distance_context_latents,
             distance_between_contexts=norm(context[..., None, :] - leave_one_out_contexts, axis=-1),
             cosine_between_contexts=cosine_between_contexts,
-            distance_between_latents=norm(latents[..., None, :] - leave_one_out_latents, axis=-1),
+            distance_between_latents=norm(latents[..., None, :] - original_leave_one_out_latents, axis=-1),
             cosine_between_latents=cosine_between_latents,
         )
         loss, metrics = tree_map(jnp.mean, (loss, metrics))
@@ -217,6 +226,7 @@ class LPN(nn.Module):
             loss: loss value. Shape (*B,).
             metrics: dictionary of metrics of shape (*B,).
         """
+        print(f"Context shape: {context.shape}, pairs shape: {pairs.shape}, grid_shapes shape: {grid_shapes.shape}")
         config = self.decoder.config
 
         # Make the input and output sequences.
@@ -898,8 +908,8 @@ class LPN(nn.Module):
 if __name__ == "__main__":
     from src.models.utils import TransformerLayerConfig
 
-    batch_size = 4
-    mini_batch_size = 3
+    batch_size = 6
+    mini_batch_size = 4
     max_rows = 5
     max_cols = 5
     vocab_size = 10
