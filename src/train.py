@@ -816,7 +816,7 @@ def run(cfg: omegaconf.DictConfig):
     lpn = LPN(encoder=encoder, decoder=decoder)
 
     wandb.init(
-        entity="TheThinker",
+        #entity="TheThinker",
         project="ARC",
         settings=wandb.Settings(console="redirect"),
         config=omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),

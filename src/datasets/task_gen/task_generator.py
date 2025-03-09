@@ -78,6 +78,8 @@ class ArcTrainTaskGenerator(IterableDataset):
         timeout_generate_pair: int = 5,
         overfit_task: Optional[str] = None,
         only_n_tasks: Optional[int] = None,
+        max_rows: int = 30,
+        max_cols: int = 30,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
@@ -89,6 +91,10 @@ class ArcTrainTaskGenerator(IterableDataset):
         self.overfit_task = overfit_task
         self.only_n_tasks = only_n_tasks
         self.task_names = ARC_TASK_NAMES
+        self.max_rows = max_rows
+        self.max_cols = max_cols
+        print("-=--=-=-=-=-=-=-=-=-=-=-=-++++++")
+        print(f"num_rows: {self.max_rows}, num_cols: {self.max_cols}")
         if only_n_tasks is not None:
             self.task_names = self.task_names[:only_n_tasks]
 
@@ -139,6 +145,9 @@ class ArcTrainTaskGenerator(IterableDataset):
                     stop = False
                     break
                 if not is_grid(pair["input"]) or not is_grid(pair["output"]):
+                    stop = False
+                    break
+                if not (len(pair["input"]) <= self.max_rows and len(pair["input"][0]) <= self.max_cols):
                     stop = False
                     break
                 task.append({key: np.array(value) for key, value in pair.items()})
