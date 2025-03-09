@@ -395,7 +395,7 @@ class DecoderTransformer(nn.Module):
             axis=-2,
         )
         x = nn.Dropout(rate=config.transformer_layer.dropout_rate, name="embed_dropout")(x, dropout_eval)
-        x += spread_context_embed[:, None, :]
+        x += spread_context_embed[..., None, :]
         assert x.shape[-2] == 1 + 2 * (2 + config.max_len)  # 1805
         return x
 
