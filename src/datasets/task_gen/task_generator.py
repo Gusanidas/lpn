@@ -78,6 +78,8 @@ class ArcTrainTaskGenerator(IterableDataset):
         timeout_generate_pair: int = 5,
         overfit_task: Optional[str] = None,
         only_n_tasks: Optional[int] = None,
+        num_rows: int = 30,
+        num_cols: int = 30,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
@@ -89,6 +91,8 @@ class ArcTrainTaskGenerator(IterableDataset):
         self.overfit_task = overfit_task
         self.only_n_tasks = only_n_tasks
         self.task_names = ARC_TASK_NAMES
+        self.num_rows = num_rows
+        self.num_cols = num_cols
         if only_n_tasks is not None:
             self.task_names = self.task_names[:only_n_tasks]
 
@@ -105,10 +109,10 @@ class ArcTrainTaskGenerator(IterableDataset):
         if self.overfit_task is not None:
             task_fn_name = f"generate_{self.overfit_task}"
             assert task_fn_name in globals(), f"Function {task_fn_name} not found."
-            self.generate_functions = [functools.partial(globals()[task_fn_name], 0, 1)]
+            self.generate_functions = [functools.partial(globals()[task_fn_name], 0, 0)]
         else:
             self.generate_functions = [
-                functools.partial(globals()[f"generate_{task_name}"], 0, 1) for task_name in self.task_names
+                functools.partial(globals()[f"generate_{task_name}"], 0, 0) for task_name in self.task_names
             ]
         return self
 
@@ -139,6 +143,9 @@ class ArcTrainTaskGenerator(IterableDataset):
                     stop = False
                     break
                 if not is_grid(pair["input"]) or not is_grid(pair["output"]):
+                    stop = False
+                    break
+                if not (pair["input"].shape[0] <= self.num_rows and pair["input"].shape[1] <= self.num_cols):
                     stop = False
                     break
                 task.append({key: np.array(value) for key, value in pair.items()})
