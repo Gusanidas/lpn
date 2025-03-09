@@ -93,8 +93,6 @@ class ArcTrainTaskGenerator(IterableDataset):
         self.task_names = ARC_TASK_NAMES
         self.max_rows = max_rows
         self.max_cols = max_cols
-        print("-=--=-=-=-=-=-=-=-=-=-=-=-++++++")
-        print(f"num_rows: {self.max_rows}, num_cols: {self.max_cols}")
         if only_n_tasks is not None:
             self.task_names = self.task_names[:only_n_tasks]
 
@@ -111,10 +109,10 @@ class ArcTrainTaskGenerator(IterableDataset):
         if self.overfit_task is not None:
             task_fn_name = f"generate_{self.overfit_task}"
             assert task_fn_name in globals(), f"Function {task_fn_name} not found."
-            self.generate_functions = [functools.partial(globals()[task_fn_name], 0, 1)]
+            self.generate_functions = [functools.partial(globals()[task_fn_name], 0, 0)]
         else:
             self.generate_functions = [
-                functools.partial(globals()[f"generate_{task_name}"], 0, 1) for task_name in self.task_names
+                functools.partial(globals()[f"generate_{task_name}"], 0, 0) for task_name in self.task_names
             ]
         return self
 

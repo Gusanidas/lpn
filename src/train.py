@@ -232,6 +232,7 @@ class Trainer:
                 num_pairs, length = dict_["num_pairs"], dict_["length"]
                 default_dataset_name = "generator"
                 task_generator_kwargs = dict_.get("task_generator_kwargs") or {}
+                print(f"task_generator_kwargs: {task_generator_kwargs}")
                 grids, shapes, program_ids = make_dataset(
                     length,
                     num_pairs,
