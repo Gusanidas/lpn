@@ -191,6 +191,11 @@ def make_task_gen_dataloader(
     elif task_generator_class == "COMBINED":
         seed = seed or 0
         seed0, seed1, seed2, seed3 = jax.random.split(jax.random.PRNGKey(seed), 4)
+        task_generator_kwargs["num_rows"] = task_generator_kwargs.get("num_rows", max_rows)
+        task_generator_kwargs["max_rows"] = max_rows
+        task_generator_kwargs["num_cols"] = task_generator_kwargs.get("num_cols", max_cols)
+        task_generator_kwargs["max_cols"] = max_cols
+        }
         task_generator = CombinedTaskGenerator(generators=[
             PatternTaskGenerator(num_pairs=num_pairs, seed=seed0, **task_generator_kwargs),
             PatternTaskGeneratorHard(num_pairs=num_pairs, seed=seed1, **task_generator_kwargs),
