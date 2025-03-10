@@ -74,12 +74,12 @@ class LPN(nn.Module):
         cosine_between_latents_mu = jnp.einsum("...h,...nh->...n", latents_mu, latents_mu_leave_one_out) / (
             norm(latents_mu, axis=-1)[..., None] * norm(latents_mu_leave_one_out, axis=-1) + 1e-5
         )
-        d_between_latents_mu = (latents_mu[..., None, :] - latents_mu_leave_one_out).norm(axis=-1).mean()
+        d_between_latents_mu = norm(latents_mu[..., None, :] - latents_mu_leave_one_out, axis=-1).mean()
         latents_logvar_leave_one_out = make_leave_one_out(latents_logvar, axis=-2)
         cosine_between_latents_logvar = jnp.einsum("...h,...nh->...n", latents_logvar, latents_logvar_leave_one_out) / (
             norm(latents_logvar, axis=-1)[..., None] * norm(latents_logvar_leave_one_out, axis=-1) + 1e-5
         )
-        d_between_latents_logvar = (latents_logvar[..., None, :] - latents_logvar_leave_one_out).norm(axis=-1).mean()
+        d_between_latents_logvar = norm(latents_logvar[..., None, :] - latents_logvar_leave_one_out, axis=-1).mean()
 
         if mode_kwargs.get("remove_encoder_latents", False):
             key = self.make_rng("latents_init")
