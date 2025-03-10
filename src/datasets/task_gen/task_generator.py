@@ -102,7 +102,8 @@ class PatternTaskGeneratorHard(IterableDataset):
 
     def __next__(self) -> tuple[list[dict[str, tuple]], dict[str, Any]]:
         task = []
-        colors = random.shuffle(list(range(1, 9)))
+        colors = list(range(1, 9))
+        random.shuffle(colors)
         color_function = self._get_color_function(colors)
         pointer_color, pattern_colors, background_colors = colors[0], colors[1:4], colors[4:]
         pattern = self.generate_pattern(pattern_colors)
@@ -314,16 +315,6 @@ class CombinedTaskGenerator(IterableDataset):
         
         return task, info
 
-
-# Example usage:
-# combined_gen = CombinedTaskGenerator(
-#     generators=[
-#         PatternTaskGenerator(num_pairs=4, seed=42),
-#         CellularAutomataTaskGenerator(num_pairs=4, seed=42)
-#     ],
-#     probabilities=[0.7, 0.3],  # 70% pattern tasks, 30% cellular automata tasks
-#     seed=42
-# )
 
 class ArcTrainTaskGenerator(IterableDataset):
     def __init__(
