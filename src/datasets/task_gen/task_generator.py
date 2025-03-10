@@ -20,6 +20,7 @@ class PatternTaskGenerator(IterableDataset):
         num_cols: int = 10,
         pattern_size: int = 4,
         pattern_density: float = 1.0,
+        **kwargs,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
@@ -78,6 +79,7 @@ class PatternTaskGeneratorHard(IterableDataset):
         num_cols: int = 10,
         pattern_size: int = 4,
         pattern_density: float = 1.0,
+        **kwargs,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
@@ -150,6 +152,7 @@ class CellularAutomataTaskGenerator(IterableDataset):
         seed: Optional[int] = None,
         num_rows: int = 10,
         num_cols: int = 10,
+        **kwargs,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
@@ -332,6 +335,7 @@ class ArcTrainTaskGenerator(IterableDataset):
         only_n_tasks: Optional[int] = None,
         max_rows: int = 30,
         max_cols: int = 30,
+        **kwargs,
     ):
         self.num_pairs = num_pairs
         self.seed = seed
