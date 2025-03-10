@@ -64,6 +64,17 @@ class LPN(nn.Module):
         assert pairs.shape[-4] > 1, f"Number of pairs should be greater than 1, got {pairs.shape[-4]}."
         latents_mu, latents_logvar = self.encoder(pairs, grid_shapes, dropout_eval)
         print(f"latents_mu shape: {latents_mu.shape}, latents_logvar shape: {latents_logvar.shape}")
+        latents_mu_leave_one_out = make_leave_one_out(latents_mu, axis=-2)
+        cosine_between_latents_mu = jnp.einsum("...h,...nh->...n", latents_mu, latents_mu_leave_one_out) / (
+            norm(latents_mu, axis=-1)[..., None] * norm(latents_mu_leave_one_out, axis=-1) + 1e-5
+        )
+        d_between_latents_mu = (latents_mu[..., None, :] - latents_mu_leave_one_out).norm(axis=-1).mean()
+        latents_logvar_leave_one_out = make_leave_one_out(latents_logvar, axis=-2)
+        cosine_between_latents_logvar = jnp.einsum("...h,...nh->...n", latents_logvar, latents_logvar_leave_one_out) / (
+            norm(latents_logvar, axis=-1)[..., None] * norm(latents_logvar_leave_one_out, axis=-1) + 1e-5
+        )
+        d_between_latents_logvar = (latents_logvar[..., None, :] - latents_logvar_leave_one_out).norm(axis=-1).mean()
+
 
         if latents_logvar is not None:
             key = self.make_rng("latents")
@@ -146,6 +157,10 @@ class LPN(nn.Module):
             cosine_between_contexts=cosine_between_contexts,
             distance_between_latents=norm(latents[..., None, :] - original_leave_one_out_latents, axis=-1),
             cosine_between_latents=cosine_between_latents,
+            d_between_latents_mu=d_between_latents_mu,
+            cosine_between_latents_mu=cosine_between_latents_mu,
+            d_between_latents_logvar=d_between_latents_logvar,
+            cosine_between_latents_logvar=cosine_between_latents_logvar,
         )
         loss, metrics = tree_map(jnp.mean, (loss, metrics))
         metrics.update(kl_metrics)
@@ -172,10 +187,12 @@ class LPN(nn.Module):
             KL(N(mu[..., i], exp(log_var[..., i])) || N(mu[..., j], exp(log_var[..., j])))
         """
         # Expand dimensions for broadcasting
+        print(f"mu shape: {mu.shape}, log_var shape: {log_var.shape}")
         mu1 = mu[..., :, None, :]  # (*B, N, 1, H)
         mu2 = mu[..., None, :, :]  # (*B, 1, N, H)
         log_var1 = log_var[..., :, None, :]  # (*B, N, 1, H)
         log_var2 = log_var[..., None, :, :]  # (*B, 1, N, H)
+        print(f"log_var1 shape: {log_var1.shape}, log_var2 shape: {log_var2.shape}")
         # KL divergence formula for Gaussians:
         # KL(N1||N2) = 0.5 * (log(var2/var1) + var1/var2 + (mu1-mu2)^2/var2 - 1)
         var1, var2 = jnp.exp(log_var1), jnp.exp(log_var2)
@@ -187,6 +204,7 @@ class LPN(nn.Module):
         # Mask the diagonal to avoid comparing the same latents.
         num_pairs = mu.shape[-2]
         kl = jnp.sum(jnp.where(jnp.eye(num_pairs) == 0, kl, 0), axis=(-1, -2)) / (num_pairs * (num_pairs - 1))
+        print(f"kl shape: {kl.shape}")
         return kl
 
     @staticmethod
