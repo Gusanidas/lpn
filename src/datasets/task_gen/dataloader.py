@@ -190,7 +190,7 @@ def make_task_gen_dataloader(
         )
     elif task_generator_class == "COMBINED":
         seed = seed or 0
-        seed0, seed1, seed2, seed3 = jax.random.split(jax.random.PRNGKey(seed), 4)
+        seed0, seed1, seed2, seed3 = seed + 0, seed + 1, seed + 2, seed + 3
         task_generator_kwargs["num_rows"] = task_generator_kwargs.get("num_rows", max_rows)
         task_generator_kwargs["max_rows"] = max_rows
         task_generator_kwargs["num_cols"] = task_generator_kwargs.get("num_cols", max_cols)
