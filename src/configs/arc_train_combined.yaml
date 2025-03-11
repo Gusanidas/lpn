@@ -12,15 +12,15 @@ training:
   gradient_accumulation_steps: 2  # the higher the slower but the lower memory usage while keeping effective batch size constant
   total_num_steps: 500000
   log_every_n_steps: 20  # this has to respect dataset_size >= batch_size * log_every_n_steps
-  eval_every_n_logs: 100  # null to disable eval
+  eval_every_n_logs: 10  # null to disable eval
   save_checkpoint_every_n_logs: 100  # null to disable checkpointing
   learning_rate: 4e-4
   prior_kl_coeff: 1e-4
   pairwise_kl_coeff: null
   mixed_precision: True  # if True, it uses bfloat16 for activations (params stay in float32)
-  online_data_augmentation: True
+  online_data_augmentation: False
   task_generator:
-    num_workers: 4
+    num_workers: 1
     num_pairs: 4
     class: COMBINED
     max_rows: 12
@@ -31,7 +31,7 @@ training:
 eval:
   eval_datasets:
   test_datasets:
-    - generator: COMBINED
+    - generator: CA
       task_generator_kwargs:
         max_rows: 12
         max_cols: 12
@@ -62,8 +62,10 @@ eval:
       task_generator_kwargs:
         max_rows: 12
         max_cols: 12
+        num_rows: 12
+        num_cols: 12
       num_pairs: 4
-      length: 8
+      length: 48
       batch_size: 16
       inference_mode: gradient_ascent
       inference_kwargs:
@@ -76,8 +78,10 @@ eval:
       task_generator_kwargs:
         max_rows: 12
         max_cols: 12
+        num_rows: 12
+        num_cols: 12
       num_pairs: 4
-      length: 8
+      length: 48
       batch_size: 16
       inference_mode: gradient_ascent
       inference_kwargs:
