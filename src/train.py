@@ -804,10 +804,14 @@ def instantiate_config_for_mpt(
     return config
 
 
+import wandb
+from wandb.apis.public import Api
+
 @hydra.main(config_path="configs", version_base=None, config_name="task_gen")
 def run(cfg: omegaconf.DictConfig):
     logging.info("All devices available: {}".format(jax.devices()))
-
+    
+    # Model initialization
     if cfg.training.get("mixed_precision", False):
         encoder = EncoderTransformer(instantiate_config_for_mpt(cfg.encoder_transformer))
         decoder = DecoderTransformer(instantiate_config_for_mpt(cfg.decoder_transformer))
@@ -815,32 +819,95 @@ def run(cfg: omegaconf.DictConfig):
         encoder = EncoderTransformer(hydra.utils.instantiate(cfg.encoder_transformer))
         decoder = DecoderTransformer(hydra.utils.instantiate(cfg.decoder_transformer))
     lpn = LPN(encoder=encoder, decoder=decoder)
-
-    wandb.init(
-        #entity="TheThinker",
+    
+    # Initialize wandb
+    wandb_run = wandb.init(
         project="ARC",
         settings=wandb.Settings(console="redirect"),
         config=omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
         save_code=True,
+        # If you want to resume the same run
+        id=cfg.training.get("wandb_run_id", None),
+        resume="allow" if cfg.training.get("wandb_run_id", None) else None
     )
+    
     trainer = Trainer(cfg=cfg, model=lpn)
     init_key, train_key = jax.random.split(jax.random.PRNGKey(cfg.training.seed))
     init_state = trainer.init_train_state(init_key, cfg.training.learning_rate)
-    if cfg.training.get("resume_from_checkpoint", False):
+    
+    start_num_steps = 0
+    
+    # Resume from wandb checkpoint
+    if cfg.training.get("resume_from_wandb", False):
+        wandb_run_path = cfg.training.wandb_run_path  # Format: "username/project/runid"
+        artifact_name = cfg.training.wandb_artifact_name  # e.g., "model-checkpoint:latest"
+        
+        # Approach 1: Use wandb artifacts (recommended)
+        if cfg.training.get("use_wandb_artifacts", True):
+            artifact = wandb_run.use_artifact(f"{wandb_run_path}/{artifact_name}")
+            artifact_dir = artifact.download()
+            checkpoint_path = os.path.join(artifact_dir, "state.msgpack")  # Adjust filename as needed
+            logging.info(f"Resuming from wandb artifact checkpoint: {checkpoint_path}...")
+            init_state = trainer.load_checkpoint(checkpoint_path, init_state)
+            
+            # Get step from metadata if available
+            if hasattr(artifact, "metadata") and "step" in artifact.metadata:
+                start_num_steps = artifact.metadata["step"]
+            
+        # Approach 2: Direct API download
+        else:
+            api = Api()
+            run = api.run(wandb_run_path)
+            
+            # Find the latest checkpoint file
+            files = [f for f in run.files() if f.name.endswith(".msgpack")]
+            if files:
+                latest_file = sorted(files, key=lambda x: x.updated_at, reverse=True)[0]
+                checkpoint_path = latest_file.download(replace=True)
+                logging.info(f"Resuming from wandb API checkpoint: {checkpoint_path}...")
+                init_state = trainer.load_checkpoint(checkpoint_path, init_state)
+                
+                # Try to extract step from filename or set manually
+                if hasattr(latest_file, "metadata") and "step" in latest_file.metadata:
+                    start_num_steps = latest_file.metadata["step"]
+    
+    # Regular local checkpoint loading (your existing code)            
+    elif cfg.training.get("resume_from_checkpoint", False):
         checkpoint_path = cfg.training.resume_from_checkpoint
-        logging.info(f"Resuming from checkpoint: {checkpoint_path}...")
+        logging.info(f"Resuming from local checkpoint: {checkpoint_path}...")
         init_state = trainer.load_checkpoint(checkpoint_path, init_state)
-
+        
+        # If you store step in the filename like "checkpoint_1000.msgpack"
+        try:
+            step_str = os.path.basename(checkpoint_path).split('_')[1].split('.')[0]
+            start_num_steps = int(step_str)
+        except (IndexError, ValueError):
+            # If step can't be extracted from filename, use the step in the state
+            start_num_steps = init_state.step[0].item()
+    
     init_state = jax.device_put_replicated(init_state, trainer.devices)
+    
+    # Use the extracted start step
     final_state = trainer.train(
         state=init_state,
         cfg=cfg,
         key=train_key,
         progress_bar=True,
-        start_num_steps=init_state.step[0].item(),
+        start_num_steps=start_num_steps,
     )
-    # Save the final checkpoint, after getting the state from the first device
-    trainer.save_checkpoint("state.msgpack", tree_map(lambda x: x[0], final_state))
+    
+    # Save the final checkpoint with step in the name
+    final_step = final_state.step[0].item()
+    checkpoint_name = f"state_{final_step}.msgpack"
+    trainer.save_checkpoint(checkpoint_name, tree_map(lambda x: x[0], final_state))
+    
+    # Log the checkpoint as an artifact
+    if wandb.run is not None:
+        artifact = wandb.Artifact(name=f"model-checkpoint", type="model")
+        artifact.add_file(checkpoint_name)
+        # Add metadata
+        artifact.metadata = {"step": final_step}
+        wandb.log_artifact(artifact)
 
 
 if __name__ == "__main__":
