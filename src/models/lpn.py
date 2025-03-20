@@ -12,7 +12,7 @@ import optax
 
 from src.models.transformer import EncoderTransformer, DecoderTransformer
 from src.models.utils import EncoderTransformerConfig, DecoderTransformerConfig
-from src.data_utils import make_leave_one_out
+from src.data_utils import make_leave_one_out, filter_pairs_without_element
 
 
 class LPN(nn.Module):
@@ -61,6 +61,17 @@ class LPN(nn.Module):
         """
         assert pairs.shape[-4] > 1, f"Number of pairs should be greater than 1, got {pairs.shape[-4]}."
         latents_mu, latents_logvar = self.encoder(pairs, grid_shapes, dropout_eval)
+        latents_mu_leave_one_out = make_leave_one_out(latents_mu, axis=-2)
+        cosine_between_latents_mu = jnp.einsum("...h,...nh->...n", latents_mu, latents_mu_leave_one_out) / (
+            norm(latents_mu, axis=-1)[..., None] * norm(latents_mu_leave_one_out, axis=-1) + 1e-5
+        )
+        d_between_latents_mu = norm(latents_mu[..., None, :] - latents_mu_leave_one_out, axis=-1).mean()
+        latents_logvar_leave_one_out = make_leave_one_out(latents_logvar, axis=-2)
+        cosine_between_latents_logvar = jnp.einsum("...h,...nh->...n", latents_logvar, latents_logvar_leave_one_out) / (
+            norm(latents_logvar, axis=-1)[..., None] * norm(latents_logvar_leave_one_out, axis=-1) + 1e-5
+        )
+        d_between_latents_logvar = norm(latents_logvar[..., None, :] - latents_logvar_leave_one_out, axis=-1).mean()
+
 
         if latents_logvar is not None:
             key = self.make_rng("latents")
@@ -74,7 +85,8 @@ class LPN(nn.Module):
         if mode_kwargs.get("remove_encoder_latents", False):
             key = self.make_rng("latents_init")
             latents = jax.random.normal(key, latents.shape)
-        leave_one_out_latents = make_leave_one_out(latents, axis=-2)  # (*B, N, N-1, H)
+        original_leave_one_out_latents = make_leave_one_out(latents, axis=-2)
+        leave_one_out_latents = filter_pairs_without_element(latents, axis=-2)
         if mode == "mean":
             # Compute the context vector by taking the mean of all but one latents.
             context = leave_one_out_latents.mean(axis=-2)  # (*B, N, H)
@@ -87,7 +99,7 @@ class LPN(nn.Module):
             )(leave_one_out_latents, pairs, grid_shapes, dropout_eval)
             # For logging purposes
             context = latents
-            distance_context_latents = norm(latents[..., None, :] - leave_one_out_latents, axis=-1)
+            distance_context_latents = norm(latents[..., None, :] - original_leave_one_out_latents, axis=-1)
         elif mode == "random_search":
             for arg in ["num_samples", "scale"]:
                 assert arg in mode_kwargs, f"'{arg}' argument required for 'random_search' training mode."
@@ -123,19 +135,24 @@ class LPN(nn.Module):
         cosine_between_contexts = jnp.einsum("...h,...nh->...n", context, leave_one_out_contexts) / (
             norm(context, axis=-1)[..., None] * norm(leave_one_out_contexts, axis=-1) + 1e-5
         )
-        cosine_between_latents = jnp.einsum("...h,...nh->...n", latents, leave_one_out_latents) / (
-            norm(latents, axis=-1)[..., None] * norm(leave_one_out_latents, axis=-1) + 1e-5
+
+        cosine_between_latents = jnp.einsum("...h,...nh->...n", latents, original_leave_one_out_latents) / (
+            norm(latents, axis=-1)[..., None] * norm(original_leave_one_out_latents, axis=-1) + 1e-5
         )
         if mode != "all":
-            distance_context_latents = norm(context - latents, axis=-1)
+            distance_context_latents = norm(leave_one_out_contexts - leave_one_out_latents, axis=-1)
         metrics.update(
             latents_norm=norm(latents, axis=-1),
             context_norm=norm(context, axis=-1),
             distance_context_latents=distance_context_latents,
             distance_between_contexts=norm(context[..., None, :] - leave_one_out_contexts, axis=-1),
             cosine_between_contexts=cosine_between_contexts,
-            distance_between_latents=norm(latents[..., None, :] - leave_one_out_latents, axis=-1),
+            distance_between_latents=norm(latents[..., None, :] - original_leave_one_out_latents, axis=-1),
             cosine_between_latents=cosine_between_latents,
+            d_between_latents_mu=d_between_latents_mu,
+            cosine_between_latents_mu=cosine_between_latents_mu,
+            d_between_latents_logvar=d_between_latents_logvar,
+            cosine_between_latents_logvar=cosine_between_latents_logvar,
         )
         loss, metrics = tree_map(jnp.mean, (loss, metrics))
         metrics.update(kl_metrics)
@@ -897,8 +914,8 @@ class LPN(nn.Module):
 if __name__ == "__main__":
     from src.models.utils import TransformerLayerConfig
 
-    batch_size = 4
-    mini_batch_size = 3
+    batch_size = 6
+    mini_batch_size = 4
     max_rows = 5
     max_cols = 5
     vocab_size = 10
@@ -938,7 +955,6 @@ if __name__ == "__main__":
         key, pairs, grid_shapes, dropout_eval=False, mode="mean", prior_kl_coeff=1e-4, pairwise_kl_coeff=1e-4
     )
     num_parameters = sum(p.size for p in jax.tree_util.tree_leaves(variables["params"]))
-    print(f"Number of parameters: {num_parameters:,}")
 
     rngs = {"dropout": key}
     loss, metrics = jax.jit(lpn.apply, static_argnames=["dropout_eval", "mode"])(

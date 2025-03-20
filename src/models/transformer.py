@@ -5,6 +5,7 @@ import jax
 from flax import linen as nn
 
 from src.models.utils import EncoderTransformerConfig, DecoderTransformerConfig, TransformerLayer
+from src.data_utils import make_all_pairs
 
 
 class EncoderTransformer(nn.Module):
@@ -20,11 +21,12 @@ class EncoderTransformer(nn.Module):
         """Applies Transformer Encoder on the (input, output) pairs.
 
         Args:
-            pairs: input data as tokens. Shape (*B, R, C, 2).
+            pairs: input data as tokens. Shape (*B, P, R, C, 2).
+                - P: number of pairs.
                 - R: number of rows.
                 - C: number of columns.
                 - 2: two channels (input and output)
-            grid_shapes: shapes of the grids (e.g. 30x30). Shape (*B, 2, 2). The last two dimension
+            grid_shapes: shapes of the grids (e.g. 30x30). Shape (*B, P, 2, 2). The last two dimension
                 represents (rows, columns) of two channels, e.g. [[R_input, R_output], [C_input, C_output]].
                 Expects grid shapes values to be in [1, max_rows] and [1, max_cols].
             dropout_eval: if false dropout is applied otherwise it is not.
@@ -36,6 +38,9 @@ class EncoderTransformer(nn.Module):
                 the (input, output) pairs.
         """
 
+        
+        pairs = make_all_pairs(pairs, axis=-4)
+        grid_shapes = make_all_pairs(grid_shapes, axis=-3)
         x = self.embed_grids(pairs, grid_shapes, dropout_eval)
 
         # Transformer block.
@@ -119,10 +124,16 @@ class EncoderTransformer(nn.Module):
             name="channels_embed",
         )(jnp.arange(2, dtype=jnp.uint8))
 
+        examples_embed = nn.Embed(
+            num_embeddings=2,
+            features=config.emb_dim,
+            dtype=config.dtype,
+            name="examples_embed",
+        )(jnp.arange(2, dtype=jnp.uint8))
         # Combine all the embeddings into a sequence x of shape (*B, 1+2*(R*C), H)
-        x = colors_embed + pos_embed + channels_embed
+        x = colors_embed + pos_embed + channels_embed + examples_embed[:, None, None, None, :]
         # Flatten the rows, columns and channels.
-        x = jnp.reshape(x, (*x.shape[:-4], -1, x.shape[-1]))  # (*B, 2*R*C, H)
+        x = jnp.reshape(x, (*x.shape[:-5], -1, x.shape[-1]))  # (*B, 2*R*C, H)
 
         # Embed the grid shape tokens.
         # TODO: potentially switch grid_shapes embeddings to linear embedding for better interpolation
@@ -133,6 +144,7 @@ class EncoderTransformer(nn.Module):
             name="grid_shapes_row_embed",
         )(grid_shapes[..., 0, :] - 1)
         grid_shapes_row_embed += channels_embed
+        grid_shapes_row_embed += examples_embed[:, None, :]
         grid_shapes_col_embed = nn.Embed(
             num_embeddings=config.max_cols,
             features=config.emb_dim,
@@ -140,8 +152,10 @@ class EncoderTransformer(nn.Module):
             name="grid_shapes_col_embed",
         )(grid_shapes[..., 1, :] - 1)
         grid_shapes_col_embed += channels_embed
+        grid_shapes_col_embed += examples_embed[:, None, :]
         grid_shapes_embed = jnp.concatenate([grid_shapes_row_embed, grid_shapes_col_embed], axis=-2)
-        x = jnp.concatenate([grid_shapes_embed, x], axis=-2)  # (*B, 4+2*R*C, H)
+        grid_shapes_embed = jnp.reshape(grid_shapes_embed, (*grid_shapes_embed.shape[:-3], -1, grid_shapes_embed.shape[-1]))
+        x = jnp.concatenate([grid_shapes_embed, x], axis=-2)  # (*B, 8+4*R*C, H)
 
         # Add the cls token.
         cls_token = nn.Embed(
@@ -150,8 +164,8 @@ class EncoderTransformer(nn.Module):
             dtype=config.dtype,
             name="cls_token",
         )(jnp.zeros_like(x[..., 0:1, 0], jnp.uint8))
-        x = jnp.concatenate([cls_token, x], axis=-2)  # (*B, 1+4+2*R*C, H)
-        assert x.shape[-2] == 1 + 4 + 2 * config.max_len  # 1805
+        x = jnp.concatenate([cls_token, x], axis=-2)  # (*B, 1+8+4*R*C, H)
+        assert x.shape[-2] == 1 + 8 + 4 * config.max_len  # 3609
         x = nn.Dropout(rate=config.transformer_layer.dropout_rate, name="embed_dropout")(x, dropout_eval)
         return x
 
@@ -163,7 +177,7 @@ class EncoderTransformer(nn.Module):
                 represents (rows, columns) of two channels, e.g. [[R_input, R_output], [C_input, C_output]].
 
         Returns:
-            pad mask of shape (*B, 1, T, T) with T = 1 + 4 + 2 * max_rows * max_cols.
+            pad mask of shape (*B, 1, T, T) with T = 1 + 8 + 4 * max_rows * max_cols.
         """
         batch_ndims = len(grid_shapes.shape[:-2])
         row_arange_broadcast = jnp.arange(self.config.max_rows).reshape(
@@ -176,9 +190,9 @@ class EncoderTransformer(nn.Module):
         col_mask = col_arange_broadcast < grid_shapes[..., 1:2, :]
         pad_mask = row_mask[..., :, None, :] & col_mask[..., None, :, :]
         # Flatten the rows, columns and channels.
-        pad_mask = jnp.reshape(pad_mask, (*pad_mask.shape[:-3], 1, -1))
+        pad_mask = jnp.reshape(pad_mask, (*pad_mask.shape[:-4], 1, -1))
         # Add the masks corresponding to the cls token and grid shapes tokens.
-        pad_mask = jnp.concatenate([jnp.ones((*pad_mask.shape[:-1], 1 + 4), bool), pad_mask], axis=-1)
+        pad_mask = jnp.concatenate([jnp.ones((*pad_mask.shape[:-1], 1 + 8), bool), pad_mask], axis=-1)
         # Outer product to make the self-attention mask.
         pad_mask = pad_mask[..., :, None] & pad_mask[..., None, :]
         return pad_mask

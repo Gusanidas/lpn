@@ -1,4 +1,5 @@
 import os
+import math
 from typing import Optional
 
 import chex
@@ -172,10 +173,156 @@ def make_leave_one_out(array: chex.Array, axis: int) -> chex.Array:
     Returns:
         Array of shape (*B, N, N-1, *H).
     """
+    axis = axis % array.ndim
     output = []
     for i in range(array.shape[axis]):
         array_before = jax.lax.slice_in_dim(array, 0, i, axis=axis)
         array_after = jax.lax.slice_in_dim(array, i + 1, array.shape[axis], axis=axis)
         output.append(jnp.concatenate([array_before, array_after], axis=axis))
-    output = jnp.stack(output, axis=axis - 1)
+    output = jnp.stack(output, axis=axis)
     return output
+
+
+def make_all_pairs(array: jnp.ndarray, axis: int = 1) -> jnp.ndarray:
+    """
+    Enumerate all distinct pairs along `axis` in a fully vectorized manner.
+
+    Given an array of shape (*B, N, *H) along `axis` (the dimension of size N),
+    this returns a new array of shape (*B, C, 2, *H), where
+      - C = binomial_coefficient(N, 2) = N*(N-1)//2
+      - The old dimension N is replaced by two dimensions: (C, 2).
+
+    Args:
+      array: A JAX array of shape (*B, N, *H), where `axis` is the N dimension.
+      axis:  The axis along which to enumerate 2-combinations.
+
+    Returns:
+      A JAX array of shape (*B, N*(N-1)//2, 2, *H).
+    """
+    # Normalize `axis` in case it's negative
+    axis = axis % array.ndim
+    N = array.shape[axis]
+
+    # Get all (i, j) with i < j; shape of i and j will be (C,) where C = N*(N-1)//2
+    i, j = jnp.triu_indices(N, k=1)
+
+    # Gather all "first elements" of pairs along the chosen axis
+    e1 = jnp.take(array, i, axis=axis)  # shape: (*B, C, *H)
+    # Gather all "second elements" of pairs
+    e2 = jnp.take(array, j, axis=axis)  # shape: (*B, C, *H)
+
+    # Stack them to get shape (*B, C, 2, *H)
+    # We insert the new "pair" dimension (of size 2) just after the C dimension.
+    # The dimension C is at `axis`, so we use `axis + 1` for the stacking axis.
+    pairs = jnp.stack([e1, e2], axis=axis + 1)
+
+    return pairs
+
+
+def filter_pairs_without_element(array: jnp.ndarray, axis: int = -2, original_dim: int = None) -> jnp.ndarray:
+    """
+    For each element k in the original dimension N, select all pairs from R that don't include k.
+    This function is compatible with JAX transformations like jit.
+    
+    Args:
+        array: A JAX array of shape (*B, R, *H), where R = N*(N-1)//2 is the number of pairs
+               created by make_all_pairs on an axis of size N.
+        axis: The axis where R appears.
+        original_dim: The original dimension size N. If None, it will be inferred from R.
+        
+    Returns:
+        A JAX array of shape (*B, N, (N-1)*(N-2)//2, *H), where each slice along the N axis
+        contains all pairs that don't include the corresponding element.
+    """
+    # Normalize axis if negative
+    ndim = array.ndim
+    axis = axis if axis >= 0 else ndim + axis
+    
+    # Get the number of pairs R
+    R = array.shape[axis]
+    
+    # Infer the original dimension N if not provided
+    if original_dim is None:
+        # Solve for N: R = N*(N-1)//2
+        # This is a quadratic equation: N^2 - N - 2*R = 0
+        # Using the quadratic formula: N = (1 + sqrt(1 + 8*R)) / 2
+        N = int((1 + math.sqrt(1 + 8 * R)) / 2)
+    else:
+        N = original_dim
+    
+    # For each N, we'll create a static selection map
+    # This approach avoids dynamic indexing that would break jit
+    
+    # Here's a function that generates a selection map for a given N
+    # Each row k contains the indices of pairs that don't include element k
+    # We only need to generate this once, and it's independent of the input array
+    def get_selection_map(N):
+        # Generate all pairs (i,j) with i < j
+        all_pairs = []
+        for i in range(N):
+            for j in range(i + 1, N):
+                all_pairs.push([i, j])
+        
+        # For each element k, find indices of pairs that don't include k
+        selection_map = []
+        for k in range(N):
+            indices = []
+            for p_idx, (i, j) in enumerate(all_pairs):
+                if i != k and j != k:
+                    indices.append(p_idx)
+            selection_map.append(indices)
+        
+        return selection_map
+    
+    # Static selection maps for common N values
+    # Using hardcoded selection maps for common N values
+    # This is JAX-friendly because it avoids dynamic computation
+    selection_maps = {
+        3: [[2], [1], [0]],  # For N=3, R=3
+        4: [[3, 4, 5], [1, 2, 5], [0, 2, 4], [0, 1, 3]],  # For N=4, R=6
+        5: [[6, 7, 8, 9], [3, 4, 5, 9], [1, 2, 5, 8], [0, 2, 4, 7], [0, 1, 3, 6]],  # For N=5, R=10
+        # Add more maps as needed for your specific use case
+    }
+    
+    if N not in selection_maps:
+        raise ValueError(f"Selection map for N={N} not pre-computed. Add it to the selection_maps dictionary.")
+    
+    # Get the selection map for our N
+    current_map = jnp.array(selection_maps[N])
+    
+    # Using vmap and gather for JAX-friendly selection
+    def select_pairs(k):
+        # Get the selection indices for element k
+        indices = current_map[k]
+        
+        # Use gather to select pairs
+        # This is a JAX-friendly way to index
+        selected = jnp.take(array, indices, axis=axis)
+        
+        return selected
+    
+    # Apply the selection function to each element index using vmap
+    result = jax.vmap(select_pairs)(jnp.arange(N))
+    
+    # Move the N dimension to the right position
+    # Currently: (N, (N-1)*(N-2)//2, *H) for a specific axis case
+    # We want: (*B, N, (N-1)*(N-2)//2, *H)
+    result = jnp.moveaxis(result, 0, axis)
+    
+    return result
+
+if __name__ == "__main__":
+    import time
+
+    # Basic shape tests
+    grids = jnp.ones((6,4,2))
+    leave_one_out = make_leave_one_out(grids, axis=1)
+    all_pairs = make_all_pairs(grids, axis=1)
+    print(f"all_pairs shape: {all_pairs.shape}")
+    filtered = filter_pairs_without_element(all_pairs, axis=1)
+    print(f"grids shape: {grids.shape}")
+    print(f"filtered shape: {filtered.shape}")
+    all_pairs2 = make_all_pairs(leave_one_out, axis=2)
+    print(f"all_pairs2 shape: {all_pairs2.shape}")
+
+    print(f"all_pairs2 equal to filtered: {jnp.all(all_pairs2 == filtered)}")
