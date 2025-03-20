@@ -261,6 +261,10 @@ class DecoderTransformer(nn.Module):
             config.emb_dim, config.transformer_layer.use_bias, config.dtype, name="context_embed"
         )(context)
 
+        spread_context_embed = nn.Dense(
+            config.emb_dim, config.transformer_layer.use_bias, config.dtype, name="spread_context_embed"
+        )(context)
+
         # Position embedding block.
         if self.config.scaled_position_embeddings:
             pos_row_embed = nn.Embed(
@@ -403,6 +407,7 @@ class DecoderTransformer(nn.Module):
             axis=-2,
         )
         x = nn.Dropout(rate=config.transformer_layer.dropout_rate, name="embed_dropout")(x, dropout_eval)
+        x += spread_context_embed[..., None, :]
         assert x.shape[-2] == 1 + 2 * (2 + config.max_len)  # 1805
         return x
 
