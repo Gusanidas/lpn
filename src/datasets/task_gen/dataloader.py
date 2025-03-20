@@ -8,7 +8,13 @@ import numpy as np
 import jax.numpy as jnp
 from tqdm.auto import trange
 
-from src.datasets.task_gen.task_generator import PatternTaskGenerator, ArcTrainTaskGenerator
+from src.datasets.task_gen.task_generator import (
+    PatternTaskGenerator,
+    ArcTrainTaskGenerator,
+    CombinedTaskGenerator,
+    PatternTaskGeneratorHard,
+    CellularAutomataTaskGenerator,
+)
 from src.data_utils import data_augmentation_fn
 
 
@@ -17,7 +23,13 @@ class JAXDataLoader:
 
     def __init__(
         self,
-        task_generator: PatternTaskGenerator | ArcTrainTaskGenerator,
+        task_generator: (
+            PatternTaskGenerator
+            | ArcTrainTaskGenerator
+            | CombinedTaskGenerator
+            | PatternTaskGeneratorHard
+            | CellularAutomataTaskGenerator
+        ),
         batch_size: int,
         log_every_n_steps: int,
         num_workers: int,
@@ -51,7 +63,9 @@ class JAXDataLoader:
         self.key = jax.random.PRNGKey(seed or 0)
         self.return_info = return_info
 
-    def __iter__(self) -> Iterator[Tuple[chex.Array, chex.Array] | Tuple[chex.Array, chex.Array, dict]]:
+    def __iter__(
+        self,
+    ) -> Iterator[Tuple[chex.Array, chex.Array] | Tuple[chex.Array, chex.Array, dict]]:
         for batch in self.numpy_dataloader:
             if self.return_info:
                 *batch, info = batch
@@ -77,13 +91,22 @@ def collate_fn(
     tasks, infos = zip(*batch)
     grids, shapes = [], []
     for task in tasks:
-        task_input_grids, task_input_shapes, task_output_grids, task_output_shapes = [], [], [], []
+        task_input_grids, task_input_shapes, task_output_grids, task_output_shapes = (
+            [],
+            [],
+            [],
+            [],
+        )
         for pair in task:
             input_grid, output_grid = pair["input"], pair["output"]
             input_shape, output_shape = input_grid.shape, output_grid.shape
-            input_grid = np.pad(input_grid, ((0, max_rows - input_shape[0]), (0, max_cols - input_shape[1])))
+            input_grid = np.pad(
+                input_grid,
+                ((0, max_rows - input_shape[0]), (0, max_cols - input_shape[1])),
+            )
             output_grid = np.pad(
-                output_grid, ((0, max_rows - output_shape[0]), (0, max_cols - output_shape[1]))
+                output_grid,
+                ((0, max_rows - output_shape[0]), (0, max_cols - output_shape[1])),
             )
             task_input_grids.append(input_grid)
             task_input_shapes.append(input_shape)
@@ -102,8 +125,12 @@ def collate_fn(
         shapes = shapes.reshape(log_every_n_steps, batch_size, *shapes.shape[1:])
     else:
         # Reshape to (num_devices, log_every_n_steps, batch_size // num_devices, ...)
-        grids = grids.reshape(num_devices, log_every_n_steps, batch_size // num_devices, *grids.shape[1:])
-        shapes = shapes.reshape(num_devices, log_every_n_steps, batch_size // num_devices, *shapes.shape[1:])
+        grids = grids.reshape(
+            num_devices, log_every_n_steps, batch_size // num_devices, *grids.shape[1:]
+        )
+        shapes = shapes.reshape(
+            num_devices, log_every_n_steps, batch_size // num_devices, *shapes.shape[1:]
+        )
     if return_info:
         num_attempts = np.array([info["num_attempts_generate_task"] for info in infos])
         info = {"num_attempts_generate_task": num_attempts}
@@ -116,7 +143,12 @@ def collate_fn(
             )
         else:
             info = jax.tree_util.tree_map(
-                lambda x: x.reshape(num_devices, log_every_n_steps, batch_size // num_devices, *x.shape[2:]),
+                lambda x: x.reshape(
+                    num_devices,
+                    log_every_n_steps,
+                    batch_size // num_devices,
+                    *x.shape[2:],
+                ),
                 info,
             )
         return grids, shapes, info
@@ -136,12 +168,42 @@ def make_task_gen_dataloader(
     seed: Optional[int] = None,
     **task_generator_kwargs,
 ) -> JAXDataLoader:
-    max_rows, max_cols = task_generator_kwargs.get("max_rows", 30), task_generator_kwargs.get("max_cols", 30)
+    max_rows, max_cols = task_generator_kwargs.get(
+        "max_rows", 30
+    ), task_generator_kwargs.get("max_cols", 30)
     if task_generator_class == "PATTERN":
-        task_generator = PatternTaskGenerator(num_pairs=num_pairs, seed=seed, **task_generator_kwargs)
+        task_generator = PatternTaskGenerator(
+            num_pairs=num_pairs, seed=seed, **task_generator_kwargs
+        )
         max_rows, max_cols = task_generator.num_rows, task_generator.num_cols
     elif task_generator_class == "ARC":
-        task_generator = ArcTrainTaskGenerator(num_pairs=num_pairs, seed=seed, **task_generator_kwargs)
+        task_generator = ArcTrainTaskGenerator(
+            num_pairs=num_pairs, seed=seed, **task_generator_kwargs
+        )
+    elif task_generator_class == "PATTERN_HARD":
+        task_generator = PatternTaskGeneratorHard(
+            num_pairs=num_pairs, seed=seed, **task_generator_kwargs
+        )
+    elif task_generator_class == "CA":
+        task_generator = CellularAutomataTaskGenerator(
+            num_pairs=num_pairs, seed=seed, **task_generator_kwargs
+        )
+    elif task_generator_class == "COMBINED":
+        seed = seed or 0
+        seed0, seed1, seed2, seed3 = seed + 0, seed + 1, seed + 2, seed + 3
+        task_generator_kwargs["num_rows"] = task_generator_kwargs.get("num_rows", max_rows)
+        task_generator_kwargs["max_rows"] = max_rows
+        task_generator_kwargs["num_cols"] = task_generator_kwargs.get("num_cols", max_cols)
+        task_generator_kwargs["max_cols"] = max_cols
+        task_generator = CombinedTaskGenerator(generators=[
+            PatternTaskGenerator(num_pairs=num_pairs, seed=seed0, **task_generator_kwargs),
+            PatternTaskGeneratorHard(num_pairs=num_pairs, seed=seed1, **task_generator_kwargs),
+            CellularAutomataTaskGenerator(num_pairs=num_pairs, seed=seed2, **task_generator_kwargs),
+            ArcTrainTaskGenerator(num_pairs=num_pairs, seed=seed3, **task_generator_kwargs),
+        ],
+            probabilities=[0.25, 0.25, 0.25, 0.25],
+            seed=seed,
+        )
     else:
         raise ValueError(f"Invalid task_generator_class: {task_generator_class}")
     jax_dataloader = JAXDataLoader(
@@ -181,7 +243,9 @@ def make_dataset(
         **task_generator_kwargs,
     )
     dataset_grids, dataset_shapes, program_ids = [], [], []
-    for (grids, shapes, info), _ in zip(dataloader, trange(length, desc="Generating dataset")):
+    for (grids, shapes, info), _ in zip(
+        dataloader, trange(length, desc="Generating dataset")
+    ):
         dataset_grids.append(grids[0, 0])
         dataset_shapes.append(shapes[0, 0])
         program_ids.append(info["program_ids"][0, 0] if "program_ids" in info else 0)
@@ -209,4 +273,6 @@ if __name__ == "__main__":
     for (grids, shapes), i in zip(dataloader, range(1000)):
         print("\nBatch", i + 1)
         print(grids.shape)
-        print(f"Throughput: {ema(time.time()) * grids.shape[0] * grids.shape[1]:.2f} samples/s")
+        print(
+            f"Throughput: {ema(time.time()) * grids.shape[0] * grids.shape[1]:.2f} samples/s"
+        )
